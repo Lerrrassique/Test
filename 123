@@ -1,0 +1,83 @@
+WITH 
+created_counts AS (
+    SELECT 
+        TO_CHAR(DATE_TRUNC('month', t.created), 'YYYY-MM-DD') AS month,
+        COUNT(t.key) AS tickets_created
+    FROM 
+        Ticket t
+    WHERE 
+        t.created >= CURRENT_DATE - INTERVAL '12 months'
+    GROUP BY 
+        DATE_TRUNC('month', t.created)
+),
+
+resolved_counts AS (
+    SELECT 
+        TO_CHAR(DATE_TRUNC('month', t.resolved), 'YYYY-MM-DD') AS month,
+        COUNT(t.key) AS tickets_resolved
+    FROM 
+        Ticket t
+    WHERE 
+        t.resolved IS NOT NULL
+        AND t.resolved >= CURRENT_DATE - INTERVAL '12 months'
+    GROUP BY 
+        DATE_TRUNC('month', t.resolved)
+),
+
+story_points_sum AS (
+    SELECT 
+        TO_CHAR(DATE_TRUNC('month', t.created), 'YYYY-MM-DD') AS month,
+        SUM(t.story_points) AS total_story_points
+    FROM 
+        Ticket t
+    WHERE 
+        t.created >= CURRENT_DATE - INTERVAL '12 months'
+        AND t.story_points IS NOT NULL
+    GROUP BY 
+        DATE_TRUNC('month', t.created)
+),
+
+worklog_sum AS (
+    SELECT 
+        TO_CHAR(DATE_TRUNC('month', w.start_date), 'YYYY-MM-DD') AS month,
+        SUM(w.timespent) / 60.0 AS total_time_logged_hours
+    FROM 
+        worklog w
+    JOIN 
+        Ticket t ON t.id = w.workitem_id
+    WHERE 
+        w.start_date >= CURRENT_DATE - INTERVAL '12 months'
+    GROUP BY 
+        DATE_TRUNC('month', w.start_date)
+),
+
+months AS (
+    SELECT 
+        TO_CHAR(DATE_TRUNC('month', CURRENT_DATE - (interval '1 month' * generate_series(0, 11))), 'YYYY-MM-DD') AS month
+)
+
+SELECT 
+    m.month,
+    CASE 
+        WHEN COALESCE(w.total_time_logged_hours, 0) > 0 
+        THEN ROUND((COALESCE(s.total_story_points, 0) / COALESCE(w.total_time_logged_hours, 1))::numeric, 2)
+        ELSE 0 
+    END AS productivity_index,
+    CASE 
+        WHEN COALESCE(c.tickets_created, 0) > 0 
+        THEN ROUND((COALESCE(r.tickets_resolved, 0)::numeric / COALESCE(c.tickets_created, 1))::numeric, 2)
+        ELSE 0 
+    END AS cloud_program_index
+FROM 
+    months m
+LEFT JOIN 
+    created_counts c ON m.month = c.month
+LEFT JOIN 
+    resolved_counts r ON m.month = r.month
+LEFT JOIN 
+    story_points_sum s ON m.month = s.month
+LEFT JOIN 
+    worklog_sum w ON m.month = w.month
+ORDER BY 
+    m.month;
+	
